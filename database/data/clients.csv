@@ -1,0 +1,6 @@
+id,full_name,is_professional,discount
+1,John Doe,FALSE,0.00
+2,Jane Smith,TRUE,0.10
+3,Peter Jones,FALSE,0.05
+4,Alice Brown,TRUE,0.15
+5,Bob White,FALSE,0.00
