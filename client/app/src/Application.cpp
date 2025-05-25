@@ -316,11 +316,11 @@ namespace nsudb
         dbDesc.Username.resize(32, 0);
         dbDesc.Password.resize(32, 0);
 
-        dbDesc.HostName = "127.0.0.1";
-        dbDesc.Database = "photo_center_db";
-        dbDesc.Username = "admin_user";
-        dbDesc.Password = "admin";
-        dbDesc.Port     = 5431;
+        // dbDesc.HostName = "127.0.0.1";
+        // dbDesc.Database = "photo_center_db";
+        // dbDesc.Username = "admin_user";
+        // dbDesc.Password = "admin";
+        // dbDesc.Port     = 5431;
 
         static bool s_bShowDbConnWindow      = true;  // On startup we have to enter db options first.
         static bool s_bShowAppSettingsWindow = false;
@@ -462,7 +462,7 @@ namespace nsudb
                         if (ImGui::Button("Connect", ImVec2(button_width, 0)))
                         {
                             m_DbConn = std::make_unique<DatabaseConnection>(dbDesc);
-                            m_DbConn->TryConnectIfNotConnected();
+                            if (!m_DbConn->TryConnectIfNotConnected()) m_DbConn.reset();
 
                             LOG_TRACE("Attempting to connect to database:");
                             LOG_TRACE("  Host: {}", dbDesc.HostName);
@@ -511,17 +511,22 @@ namespace nsudb
                 static const ImGuiWindowFlags_ dbWindowFlags = {};  // ImGuiWindowFlags_NoMove;
 
                 // Queries
+                if (ImGui::Begin("SQL", nullptr, dbWindowFlags))
                 {
-                    ImGui::Begin("SQL", nullptr, dbWindowFlags);
-
                     // Input field for SQL query
                     ImGui::Text("SQL Query:");
+                    // Set the InputTextMultiline to expand horizontally (-FLT_MIN)
+                    // and use a flexible height that will allow vertical resizing
                     ImGui::InputTextMultiline("##SQLQuery", sqlQueryBuffer, sizeof(sqlQueryBuffer),
-                                              ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 8),  // Adjust height as needed
+                                              ImVec2(-FLT_MIN, ImGui::GetContentRegionAvail().y *
+                                                                   0.4f),  // Allocate 40% of remaining vertical space, adjust as needed
                                               ImGuiInputTextFlags_AllowTabInput);
 
                     // Run Query button
-                    if (m_DbConn && ImGui::Button("Run Query")) lastQueryResult = m_DbConn->Execute(sqlQueryBuffer);
+                    if (m_DbConn && ImGui::Button("Run Query"))
+                    {
+                        lastQueryResult = m_DbConn->Execute(sqlQueryBuffer);
+                    }
 
                     ImGui::SameLine();
                     ImGui::TextDisabled("(Cmd+Enter / Ctrl+Enter to run)");
@@ -533,15 +538,16 @@ namespace nsudb
                     }
 
                     // Display query results
-                    if (lastQueryResult)
+                    if (lastQueryResult && !lastQueryResult->ColumnNames.empty())
                     {
                         ImGui::Separator();
                         ImGui::Text("Result: %zu rows, %zu cols", lastQueryResult->Rows.size(), lastQueryResult->ColumnNames.size());
 
                         // Use ImGui::BeginTable for better structured tabular data
+                        // Add ImGuiTableFlags_SizingStretchSame to make columns stretch evenly initially
                         if (ImGui::BeginTable("SQLQueryResultTable", lastQueryResult->ColumnNames.size(),
                                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                                  ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY))
+                                                  ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchSame))
                         {
                             // Headers
                             for (const auto& colName : lastQueryResult->ColumnNames)
@@ -564,9 +570,8 @@ namespace nsudb
                             ImGui::EndTable();
                         }
                     }
-
-                    ImGui::End();
                 }
+                ImGui::End();
 
                 // Tables
                 {

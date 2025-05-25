@@ -56,7 +56,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Вспомогательная функция для пересчета overall_price для конкретного заказа
 CREATE OR REPLACE FUNCTION trg_recalculate_order_overall_price_for_order(p_order_id INT)
 RETURNS VOID AS $$
 DECLARE
@@ -68,60 +67,51 @@ DECLARE
     v_film_price_for_outlet NUMERIC(10, 2);
     v_is_film_bought_in_outlet BOOLEAN;
     v_film_service_order_id INT;
-    v_film_code TEXT;
+    v_film_item_id INT;
+    v_order_record RECORD; -- Добавляем переменную для записи заказа
 BEGIN
-    -- Получаем текущие данные заказа
+    -- Получаем текущие данные заказа и БЛОКИРУЕМ строку orders для обновления
     SELECT o.is_urgent, o.outlet_id, c.discount
     INTO v_is_urgent, v_outlet_id, v_client_discount
     FROM orders o
     JOIN clients c ON o.client_id = c.id
-    WHERE o.id = p_order_id;
+    WHERE o.id = p_order_id
+    FOR UPDATE OF o; -- Блокируем строку в таблице orders
 
     -- Инициализируем новую общую стоимость
     v_new_overall_price := 0;
 
-    -- Добавляем стоимость услуг
     SELECT COALESCE(SUM(so.count * st.price * CASE WHEN v_is_urgent THEN 2.0 ELSE 1.0 END), 0)
     INTO v_new_overall_price
     FROM service_orders so
     JOIN service_types st ON so.service_type_id = st.id
     WHERE so.order_id = p_order_id;
 
-    -- Учитываем бесплатную проявку пленки
-    -- Определяем ID услуги "Проявка пленки"
+    -- Логика учета бесплатной проявки пленки
+    -- Аналогично, если films или delivery_items могут быть изменены, подумайте о FOR UPDATE.
     SELECT id INTO v_film_development_service_type_id
     FROM service_types
     WHERE name = 'Проявка пленки';
 
     IF v_film_development_service_type_id IS NOT NULL THEN
-        -- Проверяем, есть ли в заказе услуга проявки пленки
-        FOR v_film_service_order_id IN (
-            SELECT so_fd.id
+        FOR v_film_service_order_id, v_film_item_id IN (
+            SELECT so_fd.id, f.item_id
             FROM service_orders so_fd
+            JOIN films f ON so_fd.id = f.service_order_id
             WHERE so_fd.order_id = p_order_id
               AND so_fd.service_type_id = v_film_development_service_type_id
         ) LOOP
-            -- Получаем код пленки, связанный с этим service_order_id
-            SELECT code
-            INTO v_film_code
-            FROM films
-            WHERE service_order_id = v_film_service_order_id
-            LIMIT 1;
-
-            IF v_film_code IS NOT NULL THEN
-                -- Проверяем, куплена ли пленка в том же филиале
+            IF v_film_item_id IS NOT NULL THEN
                 SELECT EXISTS (
                     SELECT 1
                     FROM delivery_items di
                     JOIN deliveries d ON di.delivery_id = d.id
                     JOIN storages s ON d.storage_id = s.id
-                    JOIN items i ON di.item_id = i.id
                     WHERE s.outlet_id = v_outlet_id
-                      AND i.name = v_film_code -- Предполагаем, что name в items может быть кодом пленки
+                      AND di.item_id = v_film_item_id
                 ) INTO v_is_film_bought_in_outlet;
 
                 IF v_is_film_bought_in_outlet THEN
-                    -- Вычитаем стоимость проявки пленки
                     SELECT price INTO v_film_price_for_outlet
                     FROM service_types
                     WHERE id = v_film_development_service_type_id;
@@ -144,12 +134,12 @@ BEGIN
     WHERE po.order_id = p_order_id;
 
     -- Обновляем overall_price в таблице orders
+    -- Эта UPDATE будет использовать уже полученную блокировку
     UPDATE orders
     SET overall_price = v_new_overall_price
     WHERE id = p_order_id;
 END;
 $$ LANGUAGE plpgsql;
-
 
 -- Триггеры AFTER INSERT, UPDATE, DELETE на service_orders
 CREATE TRIGGER trg_after_service_orders_change
@@ -201,7 +191,7 @@ BEGIN
 
         INSERT INTO storage_items (quantity, item_id, storage_id)
         VALUES (v_quantity_change, v_item_id, v_storage_id)
-        ON CONFLICT (item_id, storage_id) DO UPDATE -- Убедитесь, что это ограничение существует
+        ON CONFLICT (item_id, storage_id) DO UPDATE 
         SET quantity = storage_items.quantity + EXCLUDED.quantity;
 
     ELSIF TG_TABLE_NAME = 'service_orders' THEN
