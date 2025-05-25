@@ -43,4 +43,13 @@ BUILD_APP.bat
 
 This will invoke the build process as defined for your environment.
 
-## ![Application Preview](resources/example_usage.jpg)
+## Features
+
+You can connect to PostgreSQL database.
+![Screenshot of SQL query interface](resources/connect_to_database_window.jpg)
+
+You can enter SQL queries and see the results in a table.
+![Screenshot of SQL query interface](resources/sql_query_window.jpg)
+
+You can browse each table in the database, optionally filtering the results.
+![Screenshot of table browser](resources/table_inspection.jpg)

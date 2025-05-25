@@ -1,3 +1,5 @@
+\connect photo_center_db
+
 -- Функция для назначения прав по CRUD
 -- R = SELECT
 -- C = INSERT

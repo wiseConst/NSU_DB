@@ -1,3 +1,5 @@
+\connect photo_center_db
+
 -- Функция для пересчета overall_price в таблице orders
 CREATE OR REPLACE FUNCTION trg_recalculate_order_overall_price()
 RETURNS TRIGGER AS $$

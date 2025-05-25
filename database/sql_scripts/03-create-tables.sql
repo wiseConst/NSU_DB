@@ -1,3 +1,5 @@
+\connect photo_center_db
+
 -- Типы торговых точек
 CREATE TABLE outlet_types (
     id SERIAL PRIMARY KEY,

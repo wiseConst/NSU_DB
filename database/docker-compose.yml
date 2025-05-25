@@ -2,6 +2,7 @@ version: '3.9'
 
 services:
   postgres:
+    build: .
     image: postgres:17.5 # same as version on my lap
     container_name: postgres
     environment:
@@ -13,8 +14,9 @@ services:
     ports:
       - "5431:5432"
     volumes:
-      - ./data:/data:ro
+      - ./data:/volumes:ro
       - ./sql_scripts:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
     deploy:
       resources:
         limits:
@@ -54,3 +56,5 @@ services:
       - log_error_verbosity=default
       - -c
       - "log_line_prefix=%m [%p]: %q%u@%d " # Changed to double quotes. The space at the end is part of the prefix.
+volumes:
+  pgdata:

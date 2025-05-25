@@ -298,11 +298,29 @@ namespace nsudb
         ImVec4 clear_color           = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
         // App state
+        std::optional<QueryResult> tableQueryResult{};
+
+        char sqlQueryBuffer[8192] = "SELECT * FROM outlet_types";  // Query input buffer
+        std::optional<QueryResult> lastQueryResult{std::nullopt};  // Stores the last executed query result
+        std::vector<std::string> tableNames{};
+        uint32_t selectedTableIndex{};
+
+        constexpr const char* queryTableNames = "SELECT tablename\n"
+                                                "FROM pg_tables\n"
+                                                "WHERE schemaname = 'public'\n"
+                                                "ORDER BY tablename";
+
         DatabaseDesc dbDesc = {};
         dbDesc.HostName.resize(32, 0);
         dbDesc.Database.resize(32, 0);
         dbDesc.Username.resize(32, 0);
         dbDesc.Password.resize(32, 0);
+
+        dbDesc.HostName = "127.0.0.1";
+        dbDesc.Database = "photo_center_db";
+        dbDesc.Username = "admin_user";
+        dbDesc.Password = "admin";
+        dbDesc.Port     = 5431;
 
         static bool s_bShowDbConnWindow      = true;  // On startup we have to enter db options first.
         static bool s_bShowAppSettingsWindow = false;
@@ -344,7 +362,6 @@ namespace nsudb
 
             // IMGUI - BEGIN FRAME
 
-            // TODO:
             {
                 const auto BeginDockspace = [&](const char* dockspaceName)
                 {
@@ -390,7 +407,13 @@ namespace nsudb
                     {
                         if (ImGui::MenuItem("Connect to Database...")) s_bShowDbConnWindow = true;
 
-                        if (ImGui::MenuItem("Close Database")) m_DbConn.reset();
+                        if (ImGui::MenuItem("Close Database"))
+                        {
+                            tableQueryResult   = {};
+                            selectedTableIndex = {};
+                            tableNames.clear();
+                            m_DbConn.reset();
+                        }
 
                         if (ImGui::MenuItem("Open Settings")) s_bShowAppSettingsWindow = true;
 
@@ -489,11 +512,6 @@ namespace nsudb
 
                 // Queries
                 {
-                    // --- Persistent state for the SQL window ---
-                    static char sqlQueryBuffer[4096] = "SELECT * FROM outlet_types";  // Query input buffer
-                    static std::optional<QueryResult> lastQueryResult{std::nullopt};  // Stores the last executed query result
-                    static bool queryExecuted = false;                                // Flag to know if a query was just run
-
                     ImGui::Begin("SQL", nullptr, dbWindowFlags);
 
                     // Input field for SQL query
@@ -503,11 +521,7 @@ namespace nsudb
                                               ImGuiInputTextFlags_AllowTabInput);
 
                     // Run Query button
-                    if (m_DbConn && ImGui::Button("Run Query"))
-                    {
-                        lastQueryResult = m_DbConn->Execute(sqlQueryBuffer);
-                        queryExecuted   = true;
-                    }
+                    if (m_DbConn && ImGui::Button("Run Query")) lastQueryResult = m_DbConn->Execute(sqlQueryBuffer);
 
                     ImGui::SameLine();
                     ImGui::TextDisabled("(Cmd+Enter / Ctrl+Enter to run)");
@@ -516,22 +530,18 @@ namespace nsudb
                     if (ImGui::Button("Clear Result"))
                     {
                         lastQueryResult = std::nullopt;
-                        queryExecuted   = false;
                     }
 
                     // Display query results
-                    if (queryExecuted && lastQueryResult)
+                    if (lastQueryResult)
                     {
                         ImGui::Separator();
-                        ImGui::Text("Query Result:");
-
-                        // Display row count
-                        ImGui::Text("Result %zu rows, %zu cols", lastQueryResult->Rows.size(), lastQueryResult->ColumnNames.size());
+                        ImGui::Text("Result: %zu rows, %zu cols", lastQueryResult->Rows.size(), lastQueryResult->ColumnNames.size());
 
                         // Use ImGui::BeginTable for better structured tabular data
                         if (ImGui::BeginTable("SQLQueryResultTable", lastQueryResult->ColumnNames.size(),
                                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                                  ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY))
+                                                  ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY))
                         {
                             // Headers
                             for (const auto& colName : lastQueryResult->ColumnNames)
@@ -541,10 +551,10 @@ namespace nsudb
                             ImGui::TableHeadersRow();
 
                             // Rows
-                            for (size_t i = 0; i < lastQueryResult->Rows.size(); ++i)
+                            for (size_t i{}; i < lastQueryResult->Rows.size(); ++i)
                             {
                                 ImGui::TableNextRow();
-                                for (size_t j = 0; j < lastQueryResult->Rows[i].size(); ++j)
+                                for (size_t j{}; j < lastQueryResult->Rows[i].size(); ++j)
                                 {
                                     ImGui::TableSetColumnIndex(j);
                                     ImGui::TextUnformatted(lastQueryResult->Rows[i][j].c_str());
@@ -553,20 +563,6 @@ namespace nsudb
 
                             ImGui::EndTable();
                         }
-                        else
-                        {
-                            // Fallback for very old ImGui versions or if table creation fails
-                            // Or just print raw data if table fails (less pretty)
-                            ImGui::Text("Could not create table. Raw data:");
-                            for (const auto& row : lastQueryResult->Rows)
-                            {
-                                for (const auto& cell : row)
-                                {
-                                    ImGui::Text("%s\t", cell.c_str());
-                                }
-                                ImGui::NewLine();
-                            }
-                        }
                     }
 
                     ImGui::End();
@@ -574,15 +570,81 @@ namespace nsudb
 
                 // Tables
                 {
-                    ImGui::Begin("TABLES", nullptr, dbWindowFlags);
+                    if (ImGui::Begin("TABLES", nullptr, dbWindowFlags) && m_DbConn)
+                    {
+                        // Fetch table names only once, or when a refresh is triggered
+                        if (tableNames.empty())
+                        {
+                            if (const auto queryResult = m_DbConn->Execute(queryTableNames); queryResult)
+                            {
+                                tableNames.clear();  // Clear previous list
+                                for (const auto& row : queryResult->Rows)
+                                    if (!row.empty()) tableNames.emplace_back(row[0]);  // tablename is the first column
 
-                    ImGui::End();
-                }
+                                std::sort(tableNames.begin(), tableNames.end());  // Keep it sorted
+                            }
+                        }
 
-                // Records
-                {
-                    ImGui::Begin("RECORDS", nullptr, dbWindowFlags);
+                        // Left Pane: List of Tables
+                        ImGui::BeginChild("##TableList", ImVec2(ImGui::GetContentRegionAvail().x * 0.3f, 0),
+                                          true);  // 30% width for table list
+                        ImGui::Text("Database Tables:");
+                        ImGui::Separator();
 
+                        const char* selectedTableName = tableNames[selectedTableIndex].c_str();
+                        for (uint32_t i{}; i < tableNames.size(); ++i)
+                        {
+                            const auto& currentTableName = tableNames[i];
+                            if (!ImGui::Selectable(currentTableName.c_str(), selectedTableIndex == i) || selectedTableIndex == i) continue;
+
+                            selectedTableIndex = i;
+                            selectedTableName  = tableNames[selectedTableIndex].c_str();
+                            // Query content of the selected table
+                            const std::string queryContent =
+                                "SELECT * FROM " + std::string(selectedTableName) + " LIMIT 100;";  // Add LIMIT for safety
+
+                            tableQueryResult = m_DbConn->Execute(queryContent);
+                        }
+                        ImGui::EndChild();
+
+                        ImGui::SameLine();
+
+                        // Right Pane: Table Content
+                        ImGui::BeginChild("##TableContent", ImVec2(0, 0), true);  // Remaining width
+                        if (selectedTableName)
+                        {
+                            ImGui::Text("Content of table: %s", selectedTableName);
+                            ImGui::Separator();
+
+                            if (tableQueryResult && !tableQueryResult->Rows.empty())
+                            {
+                                // Display table header
+                                if (ImGui::BeginTable("##TableData", tableQueryResult->ColumnNames.size(),
+                                                      ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
+                                                          ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY))
+                                {
+                                    for (const auto& colName : tableQueryResult->ColumnNames)
+                                        ImGui::TableSetupColumn(colName.c_str());
+
+                                    ImGui::TableHeadersRow();
+
+                                    // Display table rows
+                                    for (const auto& row : tableQueryResult->Rows)
+                                    {
+                                        ImGui::TableNextRow();
+                                        for (uint32_t col{}; col < row.size(); ++col)
+                                        {
+                                            ImGui::TableSetColumnIndex(col);
+                                            ImGui::TextUnformatted(row[col].c_str());
+                                        }
+                                    }
+                                    ImGui::EndTable();
+                                }
+                            }
+                        }
+
+                        ImGui::EndChild();
+                    }
                     ImGui::End();
                 }
 
@@ -693,8 +755,81 @@ namespace nsudb
         // io.ConfigViewportsNoTaskBarIcon = true;
 
         // Setup Dear ImGui style
-        ImGui::StyleColorsDark();
+        // ImGui::StyleColorsDark();
         // ImGui::StyleColorsLight();
+
+        // custom theme: https://github.com/shivang51/bess/blob/main/Bess/src/settings/themes.cpp#L38
+        {
+            ImGuiStyle& style = ImGui::GetStyle();
+            ImVec4* colors    = style.Colors;
+
+            // Primary background
+            colors[ImGuiCol_WindowBg]  = ImVec4(0.07f, 0.07f, 0.09f, 1.00f);  // #131318
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);  // #131318
+
+            colors[ImGuiCol_PopupBg] = ImVec4(0.18f, 0.18f, 0.22f, 1.00f);
+
+            // Headers
+            colors[ImGuiCol_Header]        = ImVec4(0.18f, 0.18f, 0.22f, 1.00f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.30f, 0.30f, 0.40f, 1.00f);
+            colors[ImGuiCol_HeaderActive]  = ImVec4(0.25f, 0.25f, 0.35f, 1.00f);
+
+            // Buttons
+            colors[ImGuiCol_Button]        = ImVec4(0.20f, 0.22f, 0.27f, 1.00f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.30f, 0.32f, 0.40f, 1.00f);
+            colors[ImGuiCol_ButtonActive]  = ImVec4(0.35f, 0.38f, 0.50f, 1.00f);
+
+            // Frame BG
+            colors[ImGuiCol_FrameBg]        = ImVec4(0.15f, 0.15f, 0.18f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.22f, 0.22f, 0.27f, 1.00f);
+            colors[ImGuiCol_FrameBgActive]  = ImVec4(0.25f, 0.25f, 0.30f, 1.00f);
+
+            // Tabs
+            colors[ImGuiCol_Tab]                = ImVec4(0.18f, 0.18f, 0.22f, 1.00f);
+            colors[ImGuiCol_TabHovered]         = ImVec4(0.35f, 0.35f, 0.50f, 1.00f);
+            colors[ImGuiCol_TabActive]          = ImVec4(0.25f, 0.25f, 0.38f, 1.00f);
+            colors[ImGuiCol_TabUnfocused]       = ImVec4(0.13f, 0.13f, 0.17f, 1.00f);
+            colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.20f, 0.20f, 0.25f, 1.00f);
+
+            // Title
+            colors[ImGuiCol_TitleBg]          = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
+            colors[ImGuiCol_TitleBgActive]    = ImVec4(0.15f, 0.15f, 0.20f, 1.00f);
+            colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
+
+            // Borders
+            colors[ImGuiCol_Border]       = ImVec4(0.20f, 0.20f, 0.25f, 0.50f);
+            colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+
+            // Text
+            colors[ImGuiCol_Text]         = ImVec4(0.90f, 0.90f, 0.95f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.55f, 1.00f);
+
+            // Highlights
+            colors[ImGuiCol_CheckMark]         = ImVec4(0.50f, 0.70f, 1.00f, 1.00f);
+            colors[ImGuiCol_SliderGrab]        = ImVec4(0.50f, 0.70f, 1.00f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive]  = ImVec4(0.60f, 0.80f, 1.00f, 1.00f);
+            colors[ImGuiCol_ResizeGrip]        = ImVec4(0.50f, 0.70f, 1.00f, 0.50f);
+            colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.60f, 0.80f, 1.00f, 0.75f);
+            colors[ImGuiCol_ResizeGripActive]  = ImVec4(0.70f, 0.90f, 1.00f, 1.00f);
+
+            // Scrollbar
+            colors[ImGuiCol_ScrollbarBg]          = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
+            colors[ImGuiCol_ScrollbarGrab]        = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
+            colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.40f, 0.40f, 0.50f, 1.00f);
+            colors[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.45f, 0.45f, 0.55f, 1.00f);
+
+            // Style tweaks
+            style.WindowRounding    = 5.0f;
+            style.FrameRounding     = 5.0f;
+            style.GrabRounding      = 5.0f;
+            style.TabRounding       = 5.0f;
+            style.PopupRounding     = 5.0f;
+            style.ScrollbarRounding = 5.0f;
+            style.WindowPadding     = ImVec2(10, 10);
+            style.FramePadding      = ImVec2(6, 4);
+            style.ItemSpacing       = ImVec2(8, 6);
+            style.PopupBorderSize   = 0.f;
+        }
 
         // When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
         ImGuiStyle& style = ImGui::GetStyle();

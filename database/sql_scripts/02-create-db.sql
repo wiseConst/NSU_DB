@@ -7,3 +7,7 @@ CREATE DATABASE photo_center_db
     CONNECTION LIMIT = -1;
 
 \connect photo_center_db
+
+ALTER DEFAULT PRIVILEGES FOR ROLE admin_user
+    IN SCHEMA public
+    GRANT USAGE ON SEQUENCES TO vendor, employee, manager;
