@@ -65,6 +65,8 @@ DECLARE
     v_film_development_service_type_id INT;
     v_film_price_for_outlet NUMERIC(10, 2);
     v_is_film_bought_in_outlet BOOLEAN;
+    v_film_service_order_id INT;
+    v_film_code TEXT;
 BEGIN
     -- Получаем текущие данные заказа
     SELECT o.is_urgent, o.outlet_id, c.discount
@@ -85,7 +87,9 @@ BEGIN
 
     -- Учитываем бесплатную проявку пленки
     -- Определяем ID услуги "Проявка пленки"
-    SELECT id INTO v_film_development_service_type_id FROM service_types WHERE name = 'Проявка пленки';
+    SELECT id INTO v_film_development_service_type_id
+    FROM service_types
+    WHERE name = 'Проявка пленки';
 
     IF v_film_development_service_type_id IS NOT NULL THEN
         -- Проверяем, есть ли в заказе услуга проявки пленки
@@ -93,10 +97,14 @@ BEGIN
             SELECT so_fd.id
             FROM service_orders so_fd
             WHERE so_fd.order_id = p_order_id
-            AND so_fd.service_type_id = v_film_development_service_type_id
+              AND so_fd.service_type_id = v_film_development_service_type_id
         ) LOOP
             -- Получаем код пленки, связанный с этим service_order_id
-            SELECT code INTO v_film_code FROM films WHERE service_order_id = v_film_service_order_id LIMIT 1;
+            SELECT code
+            INTO v_film_code
+            FROM films
+            WHERE service_order_id = v_film_service_order_id
+            LIMIT 1;
 
             IF v_film_code IS NOT NULL THEN
                 -- Проверяем, куплена ли пленка в том же филиале
@@ -107,20 +115,22 @@ BEGIN
                     JOIN storages s ON d.storage_id = s.id
                     JOIN items i ON di.item_id = i.id
                     WHERE s.outlet_id = v_outlet_id
-                    AND i.name = v_film_code -- Предполагаем, что name в items может быть кодом пленки
+                      AND i.name = v_film_code -- Предполагаем, что name в items может быть кодом пленки
                 ) INTO v_is_film_bought_in_outlet;
 
                 IF v_is_film_bought_in_outlet THEN
                     -- Вычитаем стоимость проявки пленки
-                    SELECT price INTO v_film_price_for_outlet FROM service_types WHERE id = v_film_development_service_type_id;
+                    SELECT price INTO v_film_price_for_outlet
+                    FROM service_types
+                    WHERE id = v_film_development_service_type_id;
+
                     v_new_overall_price := v_new_overall_price - COALESCE(v_film_price_for_outlet, 0);
                 END IF;
             END IF;
         END LOOP;
     END IF;
 
-    -- Добавляем стоимость печати
-    -- Учитываем скидки на печать и скидки клиента
+    -- Добавляем стоимость печати с учетом скидок
     SELECT v_new_overall_price + COALESCE(SUM(
         f.amount * pp.price * (1 - COALESCE(pd.discount, 0) / 100.0) * (1 - COALESCE(v_client_discount, 0) / 100.0)
     ), 0)
@@ -137,6 +147,7 @@ BEGIN
     WHERE id = p_order_id;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Триггеры AFTER INSERT, UPDATE, DELETE на service_orders
 CREATE TRIGGER trg_after_service_orders_change

@@ -1,10 +1,3 @@
--- Филиалы
-CREATE TABLE branches (
-    outlet_id INT NOT NULL UNIQUE PRIMARY KEY,
-    CONSTRAINT fk_branch_outlet FOREIGN KEY (outlet_id)
-        REFERENCES outlets(id) ON DELETE CASCADE
-);
-
 -- Типы торговых точек
 CREATE TABLE outlet_types (
     id SERIAL PRIMARY KEY,
@@ -16,9 +9,16 @@ CREATE TABLE outlets (
     id SERIAL PRIMARY KEY,
     address VARCHAR(255),
     num_workers INT NOT NULL CHECK (num_workers > 0),
-    type_id INT NOT NULL UNIQUE,
+    type_id INT NOT NULL,
     CONSTRAINT fk_outlet_type FOREIGN KEY (type_id)
         REFERENCES outlet_types(id) ON DELETE RESTRICT
+);
+
+-- Филиалы
+CREATE TABLE branches (
+    outlet_id INT NOT NULL UNIQUE PRIMARY KEY,
+    CONSTRAINT fk_branch_outlet FOREIGN KEY (outlet_id)
+        REFERENCES outlets(id) ON DELETE CASCADE
 );
 
 -- Киоски
@@ -95,6 +95,38 @@ CREATE TABLE orders (
         REFERENCES clients(id) ON DELETE CASCADE
 );
 
+-- Скидки на печать
+CREATE TABLE print_discounts (
+    id SERIAL PRIMARY KEY,
+    photo_amount INT NOT NULL,
+    discount NUMERIC(5, 2) NOT NULL
+);
+
+-- Типы бумаг
+CREATE TABLE paper_types (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+-- Форматы бумаг
+CREATE TABLE paper_sizes (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+-- Цены на печать
+CREATE TABLE print_prices (
+    id SERIAL PRIMARY KEY,
+    price NUMERIC(10, 2) NOT NULL,
+    paper_size_id INT NOT NULL,
+    paper_type_id INT NOT NULL,
+    CONSTRAINT fk_print_price_paper_size FOREIGN KEY (paper_size_id)
+        REFERENCES paper_sizes(id),
+    CONSTRAINT fk_print_price_paper_type FOREIGN KEY (paper_type_id)
+        REFERENCES paper_types(id)
+);
+
+
 -- Заказы на печать
 CREATE TABLE print_orders (
     id SERIAL PRIMARY KEY,
@@ -164,37 +196,6 @@ CREATE TABLE vendor_items (
         REFERENCES items(id) ON DELETE CASCADE
 );
 
--- Скидки на печать
-CREATE TABLE print_discounts (
-    id SERIAL PRIMARY KEY,
-    photo_amount INT NOT NULL,
-    discount NUMERIC(5, 2) NOT NULL
-);
-
--- Типы бумаг
-CREATE TABLE paper_types (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL
-);
-
--- Форматы бумаг
-CREATE TABLE paper_sizes (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL
-);
-
--- Цены на печать
-CREATE TABLE print_prices (
-    id SERIAL PRIMARY KEY,
-    price NUMERIC(10, 2) NOT NULL,
-    paper_size_id INT NOT NULL,
-    paper_type_id INT NOT NULL,
-    CONSTRAINT fk_print_price_paper_size FOREIGN KEY (paper_size_id)
-        REFERENCES paper_sizes(id),
-    CONSTRAINT fk_print_price_paper_type FOREIGN KEY (paper_type_id)
-        REFERENCES paper_types(id)
-);
-
 -- Кадры
 CREATE TABLE frames (
     id SERIAL PRIMARY KEY,
@@ -224,6 +225,7 @@ CREATE TABLE deliveries (
 CREATE TABLE delivery_items (
     id SERIAL PRIMARY KEY,
     price NUMERIC(10, 2) NOT NULL,
+        quantity INT NOT NULL,
     delivery_id INT NOT NULL,
     item_id INT NOT NULL,
     CONSTRAINT fk_delivery_item_delivery FOREIGN KEY (delivery_id)

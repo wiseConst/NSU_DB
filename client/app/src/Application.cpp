@@ -299,10 +299,13 @@ namespace nsudb
 
         // App state
         DatabaseDesc dbDesc = {};
-        dbDesc.HostName.resize(256);
-        dbDesc.Database.resize(256);
-        dbDesc.Username.resize(256);
-        dbDesc.Password.resize(256);
+        dbDesc.HostName.resize(32, 0);
+        dbDesc.Database.resize(32, 0);
+        dbDesc.Username.resize(32, 0);
+        dbDesc.Password.resize(32, 0);
+
+        static bool s_bShowDbConnWindow      = true;  // On startup we have to enter db options first.
+        static bool s_bShowAppSettingsWindow = false;
 
         // Main loop
         while (!glfwWindowShouldClose(m_Window))
@@ -381,9 +384,6 @@ namespace nsudb
 
                 BeginDockspace("nsudb_dockspace");
 
-                // On startup we have to enter db options first.
-                static bool s_bShowDbConnWindow = true;
-
                 if (ImGui::BeginMenuBar())
                 {
                     if (ImGui::BeginMenu("File"))
@@ -391,6 +391,8 @@ namespace nsudb
                         if (ImGui::MenuItem("Connect to Database...")) s_bShowDbConnWindow = true;
 
                         if (ImGui::MenuItem("Close Database")) m_DbConn.reset();
+
+                        if (ImGui::MenuItem("Open Settings")) s_bShowAppSettingsWindow = true;
 
                         ImGui::Separator();
                         if (ImGui::MenuItem("Exit")) glfwSetWindowShouldClose(m_Window, true);
@@ -409,9 +411,8 @@ namespace nsudb
                     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
                     if (ImGui::BeginPopupModal("Open NSU Database##popup", &s_bShowDbConnWindow,
-                                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar))
+                                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
                     {
-
                         ImGui::Text("Enter connection options:");
                         ImGui::Separator();
 
@@ -448,6 +449,13 @@ namespace nsudb
 
                             s_bShowDbConnWindow = false;  // Close the popup
                             ImGui::CloseCurrentPopup();
+
+                            // reset state
+                            dbDesc.HostName.resize(32, 0);
+                            dbDesc.Database.resize(32, 0);
+                            dbDesc.Username.resize(32, 0);
+                            dbDesc.Password.resize(32, 0);
+                            dbDesc.Port = DatabaseDesc{}.Port;
                         }
                         ImGui::SetItemDefaultFocus();  // Set focus to the connect button
                         ImGui::SameLine();
@@ -460,11 +468,106 @@ namespace nsudb
                     }
                 }
 
+                if (s_bShowAppSettingsWindow)
+                {
+                    ImGui::OpenPopup("Open NSU App Settings##popup");  // Open the popup with a unique ID
+
+                    // Always center the popup for better UX
+                    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+                    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+                    if (ImGui::BeginPopupModal("Open NSU App Settings##popup", &s_bShowAppSettingsWindow,
+                                               ImGuiWindowFlags_AlwaysAutoResize))
+                    {
+                        ImGui::SliderFloat("Font Scale", &io.FontGlobalScale, 1.0f, 20.0f);
+
+                        ImGui::EndPopup();
+                    }
+                }
+
                 static const ImGuiWindowFlags_ dbWindowFlags = {};  // ImGuiWindowFlags_NoMove;
 
                 // Queries
                 {
+                    // --- Persistent state for the SQL window ---
+                    static char sqlQueryBuffer[4096] = "SELECT * FROM outlet_types";  // Query input buffer
+                    static std::optional<QueryResult> lastQueryResult{std::nullopt};  // Stores the last executed query result
+                    static bool queryExecuted = false;                                // Flag to know if a query was just run
+
                     ImGui::Begin("SQL", nullptr, dbWindowFlags);
+
+                    // Input field for SQL query
+                    ImGui::Text("SQL Query:");
+                    ImGui::InputTextMultiline("##SQLQuery", sqlQueryBuffer, sizeof(sqlQueryBuffer),
+                                              ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 8),  // Adjust height as needed
+                                              ImGuiInputTextFlags_AllowTabInput);
+
+                    // Run Query button
+                    if (m_DbConn && ImGui::Button("Run Query"))
+                    {
+                        lastQueryResult = m_DbConn->Execute(sqlQueryBuffer);
+                        queryExecuted   = true;
+                    }
+
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(Cmd+Enter / Ctrl+Enter to run)");
+                    // Optional: Add a clear button
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear Result"))
+                    {
+                        lastQueryResult = std::nullopt;
+                        queryExecuted   = false;
+                    }
+
+                    // Display query results
+                    if (queryExecuted && lastQueryResult)
+                    {
+                        ImGui::Separator();
+                        ImGui::Text("Query Result:");
+
+                        // Display row count
+                        ImGui::Text("Result %zu rows, %zu cols", lastQueryResult->Rows.size(), lastQueryResult->ColumnNames.size());
+
+                        // Use ImGui::BeginTable for better structured tabular data
+                        if (ImGui::BeginTable("SQLQueryResultTable", lastQueryResult->ColumnNames.size(),
+                                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                                                  ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY))
+                        {
+                            // Headers
+                            for (const auto& colName : lastQueryResult->ColumnNames)
+                            {
+                                ImGui::TableSetupColumn(colName.c_str());
+                            }
+                            ImGui::TableHeadersRow();
+
+                            // Rows
+                            for (size_t i = 0; i < lastQueryResult->Rows.size(); ++i)
+                            {
+                                ImGui::TableNextRow();
+                                for (size_t j = 0; j < lastQueryResult->Rows[i].size(); ++j)
+                                {
+                                    ImGui::TableSetColumnIndex(j);
+                                    ImGui::TextUnformatted(lastQueryResult->Rows[i][j].c_str());
+                                }
+                            }
+
+                            ImGui::EndTable();
+                        }
+                        else
+                        {
+                            // Fallback for very old ImGui versions or if table creation fails
+                            // Or just print raw data if table fails (less pretty)
+                            ImGui::Text("Could not create table. Raw data:");
+                            for (const auto& row : lastQueryResult->Rows)
+                            {
+                                for (const auto& cell : row)
+                                {
+                                    ImGui::Text("%s\t", cell.c_str());
+                                }
+                                ImGui::NewLine();
+                            }
+                        }
+                    }
 
                     ImGui::End();
                 }
@@ -535,11 +638,29 @@ namespace nsudb
         bool glfwErr = glfwInit();
         assert(glfwErr);
 
+        uint32_t width{780}, height{540};
+
         // Create m_Window with Vulkan context
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        m_Window = glfwCreateWindow(780, 540, "Dear ImGui GLFW+Vulkan example", nullptr, nullptr);
+        m_Window = glfwCreateWindow(width, height, "NSU DB / ImGui C++ Vulkan PGFE", nullptr, nullptr);
         glfwErr  = glfwVulkanSupported();
         assert(glfwErr);
+
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);  // no resize
+
+        // center glfw window
+        {
+            // Get the primary monitor and its video mode
+            GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+            const GLFWvidmode* vidMode  = glfwGetVideoMode(primaryMonitor);
+
+            // Calculate centered position
+            int xPos = (vidMode->width - width) / 2;
+            int yPos = (vidMode->height - height) / 2;
+
+            // Set window position
+            glfwSetWindowPos(m_Window, xPos, yPos);
+        }
 
         ImVector<const char*> extensions;
         uint32_t extensions_count    = 0;

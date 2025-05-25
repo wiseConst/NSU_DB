@@ -21,13 +21,17 @@ namespace nsudb
         {
             try
             {
-                m_Connection = std::make_unique<pgfe::Connection>(pgfe::Connection_options{}
-                                                                      .set(pgfe::Communication_mode::net)
-                                                                      .set_hostname(m_Desc.HostName)
-                                                                      .set_database(m_Desc.Database)
-                                                                      .set_username(m_Desc.Username)
-                                                                      .set_password(m_Desc.Password)
-                                                                      .set_port(m_Desc.Port));
+                static constexpr uint32_t s_ConnTimeoutSeconds = 5;
+
+                const auto connectionOptions = pgfe::Connection_options{}
+                                                   .set(pgfe::Communication_mode::net)
+                                                   .set_hostname(m_Desc.HostName.c_str())
+                                                   .set_database(m_Desc.Database.c_str())
+                                                   .set_username(m_Desc.Username.c_str())
+                                                   .set_password(m_Desc.Password.c_str())
+                                                   .set_connect_timeout(std::chrono::seconds(s_ConnTimeoutSeconds))
+                                                   .set_port(m_Desc.Port);
+                m_Connection = std::make_unique<pgfe::Connection>(connectionOptions);
             }
             catch (const std::exception& e)
             {
@@ -47,6 +51,8 @@ namespace nsudb
                 LOG_ERROR(e.what());
                 return false;
             }
+
+            LOG_TRACE("Connected to DB - {}, as {}", m_Desc.Database, m_Desc.Username);
             return true;
         }
 
@@ -56,43 +62,44 @@ namespace nsudb
     std::optional<QueryResult> DatabaseConnection::Execute(const std::string& query) noexcept
     {
         std::optional<QueryResult> queryResult{std::nullopt};
-        if (!TryConnectIfNotConnected()) return queryResult;
+        if (!TryConnectIfNotConnected() || query.empty()) return queryResult;
 
         try
         {
-            m_Connection->execute(query);
+            LOG_TRACE("Database: {}, executing query: {}", m_Desc.Database, query);
 
-            if (!m_Connection->row().is_empty())
-            {
-                QueryResult queryResultLocal{};
+            QueryResult queryResultLocal{};
+            bool bColumnsInitialized = false;
 
-                // Column names
+            m_Connection->execute(
+                [&](auto&& row)
                 {
-                    const auto& rowDesc = m_Connection->row();
-                    queryResultLocal.ColumnNames.resize(rowDesc.field_count());
-                    for (uint32_t i{}; i < rowDesc.field_count(); ++i)
-                        queryResultLocal.ColumnNames[i] = rowDesc.field_name(i);
-                }
+                    if (!bColumnsInitialized)
+                    {
+                        queryResultLocal.ColumnNames.resize(row.field_count());
+                        for (std::size_t i{}; i < row.field_count(); ++i)
+                            queryResultLocal.ColumnNames[i] = row.field_name(i);
 
-                // Rows
-                while (m_Connection->completion())
-                {
-                    const auto& rowDesc = m_Connection->row();
-                    if (rowDesc.is_empty()) continue;
+                        bColumnsInitialized = true;
+                    }
 
                     auto& rowData = queryResultLocal.Rows.emplace_back();
-                    rowData.resize(rowDesc.field_count());
-                    for (uint32_t i{}; i < rowDesc.field_count(); ++i)
-                        rowData[i] = rowDesc.field_name(i);
-                }
+                    rowData.resize(row.field_count());
+                    for (std::size_t i{}; i < row.field_count(); ++i)
+                    {
+                        if (!row[i].is_empty())
+                            rowData[i] = std::string((char*)row[i].bytes());
+                        else
+                            rowData[i] = "NULL";
+                    }
+                },
+                query);
 
-                queryResult = std::move(queryResultLocal);
-            }
+            queryResult = std::move(queryResultLocal);
         }
         catch (const std::exception& e)
         {
             LOG_ERROR(e.what());
-            return queryResult;
         }
 
         return queryResult;

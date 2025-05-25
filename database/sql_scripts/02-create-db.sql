@@ -5,3 +5,5 @@ CREATE DATABASE photo_center_db
     LC_CTYPE = 'en_US.UTF-8'
     TABLESPACE = pg_default
     CONNECTION LIMIT = -1;
+
+\connect photo_center_db

@@ -13,7 +13,7 @@ namespace nsudb
 
     struct DatabaseDesc final
     {
-        std::string HostName{"localhost"};
+        std::string HostName{"127.0.0.1"};
         std::string Database{};
         std::string Username{};
         std::string Password{};

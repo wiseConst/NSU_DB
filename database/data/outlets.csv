@@ -1,6 +1,6 @@
 id,address,num_workers,type_id
 1,123 Main St,5,1
-2,456 Oak Ave,10,2
+2,456 Oak Ave,10,1
 3,789 Pine Ln,3,3
-4,101 Elm Rd,7,1
+4,101 Elm Rd,7,2
 5,202 Birch Blvd,4,2
