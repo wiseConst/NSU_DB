@@ -286,6 +286,224 @@ namespace nsudb
 
     }  // namespace ImGuiUtils
 
+    static int32_t s_SelectedQueryIndex                        = -1;
+    static const std::vector<std::string> s_HardcodedDbQueries = {
+        // 1
+        R"(SELECT b.outlet_id, o.address, ot.name AS outlet_type
+       FROM branches b
+       JOIN outlets o ON b.outlet_id = o.id
+       JOIN outlet_types ot ON o.type_id = ot.id;)",
+
+        R"(SELECT k.outlet_id, o.address, ot.name AS outlet_type, k.branch_id
+       FROM kiosks k
+       JOIN outlets o ON k.outlet_id = o.id
+       JOIN outlet_types ot ON o.type_id = ot.id;)",
+
+        R"(SELECT o.id AS outlet_id, o.address, ot.name AS outlet_type
+       FROM outlets o
+       JOIN outlet_types ot ON o.type_id = ot.id;)",
+
+        R"(SELECT COUNT(*) AS total_order_points FROM outlets;)",
+
+        // 2
+        R"(SELECT b.outlet_id AS branch_outlet_id,
+              COUNT(o.id) AS orders_count
+       FROM branches b
+       LEFT JOIN orders o ON o.outlet_id = b.outlet_id
+           AND o.accept_time BETWEEN '2024-05-20 10:00:00'::timestamp AND '2024-05-22 16:45:00'::timestamp
+       GROUP BY b.outlet_id
+       ORDER BY b.outlet_id;)",
+
+        R"(SELECT k.outlet_id AS kiosk_outlet_id,
+              COUNT(o.id) AS orders_count
+       FROM kiosks k
+       LEFT JOIN orders o ON o.outlet_id = k.outlet_id
+           AND o.accept_time BETWEEN '2024-05-20 10:00:00'::timestamp AND '2024-05-22 16:45:00'::timestamp
+       GROUP BY k.outlet_id
+       ORDER BY k.outlet_id;)",
+
+        R"(SELECT COUNT(*) AS total_orders
+       FROM orders
+       WHERE accept_time BETWEEN '2024-05-20 10:00:00'::timestamp AND '2024-05-22 16:45:00'::timestamp;)",
+
+        // 3
+        R"(WITH filtered_orders AS (
+           SELECT o.*, so.service_type_id, so.count, so.id AS service_order_id
+           FROM orders o
+           LEFT JOIN service_orders so ON o.id = so.order_id
+           WHERE o.accept_time BETWEEN '2024-05-20 10:00:00' AND '2024-05-22 16:45:00'
+             AND o.outlet_id IN (1, 3)
+       )
+       SELECT fo.service_type_id,
+              st.name AS service_name,
+              fo.is_urgent,
+              COUNT(DISTINCT fo.id) AS orders_count
+       FROM filtered_orders fo
+       LEFT JOIN service_types st ON fo.service_type_id = st.id
+       GROUP BY fo.service_type_id, st.name, fo.is_urgent
+       ORDER BY st.name, fo.is_urgent;)",
+
+        // 4
+        R"(CREATE OR REPLACE VIEW filtered_orders AS
+       SELECT o.*
+       FROM orders o
+       WHERE o.accept_time BETWEEN '2024-05-20 10:00:00'::timestamp AND '2024-05-22 16:45:00'::timestamp
+         AND (o.outlet_id = 1 OR o.outlet_id = 3);
+
+       CREATE OR REPLACE VIEW service_order_sums AS
+       SELECT o.is_urgent, so.service_type_id, SUM(o.overall_price) AS revenue
+       FROM filtered_orders o
+       JOIN service_orders so ON o.id = so.order_id
+       GROUP BY o.is_urgent, so.service_type_id;
+
+       SELECT sos.service_type_id,
+              st.name AS service_name,
+              sos.is_urgent,
+              sos.revenue
+       FROM service_order_sums sos
+       JOIN service_types st ON sos.service_type_id = st.id
+       ORDER BY st.name, sos.is_urgent;)",
+
+        // 5
+        R"(SELECT o.is_urgent, SUM(f.amount) AS total_printed_photos
+       FROM frames f
+       JOIN print_orders po ON f.print_order_id = po.id
+       JOIN orders o ON po.order_id = o.id
+       WHERE o.accept_time BETWEEN '2024-01-01 10:00:00'::timestamp AND '2024-12-30 16:45:00'::timestamp
+         AND o.outlet_id IN (SELECT outlet_id FROM branches)
+       GROUP BY o.is_urgent;
+
+       SELECT o.is_urgent, SUM(f.amount) AS total_printed_photos
+       FROM frames f
+       JOIN print_orders po ON f.print_order_id = po.id
+       JOIN orders o ON po.order_id = o.id
+       WHERE o.accept_time BETWEEN '2024-01-01 10:00:00'::timestamp AND '2024-12-30 16:45:00'::timestamp
+         AND o.outlet_id IN (SELECT outlet_id FROM kiosks)
+       GROUP BY o.is_urgent;
+
+       SELECT o.is_urgent, SUM(f.amount) AS total_printed_photos
+       FROM frames f
+       JOIN print_orders po ON f.print_order_id = po.id
+       JOIN orders o ON po.order_id = o.id
+       WHERE o.accept_time BETWEEN '2024-01-01 10:00:00'::timestamp AND '2024-12-30 16:45:00'::timestamp
+       GROUP BY o.is_urgent;)",
+
+        // 6
+        R"(SELECT o.is_urgent, COUNT(f.id) AS total_films
+       FROM films f
+       JOIN service_orders so ON f.service_order_id = so.id
+       JOIN orders o ON o.id = so.order_id
+       WHERE o.accept_time BETWEEN '2024-01-01 10:00:00'::timestamp AND '2024-12-30 16:45:00'::timestamp
+         AND o.outlet_id IN (SELECT outlet_id FROM branches WHERE outlet_id = 1)
+       GROUP BY o.is_urgent;
+
+       SELECT o.is_urgent, COUNT(f.id) AS total_films
+       FROM films f
+       JOIN service_orders so ON f.service_order_id = so.id
+       JOIN orders o ON o.id = so.order_id
+       WHERE o.accept_time BETWEEN '2024-01-01 10:00:00'::timestamp AND '2024-12-30 16:45:00'::timestamp
+         AND o.outlet_id IN (SELECT outlet_id FROM kiosks WHERE outlet_id = 3)
+       GROUP BY o.is_urgent;)",
+
+        // 7
+        R"(SELECT DISTINCT v.id AS vendor_id, v.name AS vendor_name,
+                      i.id AS item_id, i.name AS item_name,
+                      di.quantity, di.price, d.date
+       FROM vendors v
+       JOIN deliveries d ON d.vendor_id = v.id
+       JOIN delivery_items di ON di.delivery_id = d.id
+       JOIN items i ON i.id = di.item_id
+       WHERE d.date BETWEEN '2024-01-01 10:00:00'::timestamp AND '2024-12-30 16:45:00'::timestamp
+         AND di.quantity >= 2
+       ORDER BY v.id;)",
+
+        // 8
+        R"(SELECT DISTINCT c.id AS client_id, c.full_name, c.discount,
+                      o.id AS order_id, o.overall_price, o.outlet_id
+       FROM clients c
+       JOIN orders o ON o.client_id = c.id
+       WHERE c.discount > 0
+         AND o.overall_price >= 5
+         AND o.outlet_id = 3
+       ORDER BY c.id;)",
+
+        // 9
+        R"(SELECT COALESCE(SUM(stni.count * i.price * so.count), 0) AS total_revenue
+       FROM orders o
+       JOIN service_orders so ON so.order_id = o.id
+       JOIN service_types_needed_items stni ON stni.service_type_id = so.service_type_id
+       JOIN items i ON i.id = stni.item_id
+       WHERE o.accept_time BETWEEN '2024-05-20 10:00:00'::timestamp AND '2024-05-22 16:45:00'::timestamp
+         AND o.outlet_id = 1;)",
+
+        // 10
+        R"(WITH orders_in_branch AS (
+           SELECT o.id FROM orders o WHERE o.outlet_id = 1
+       ),
+       service_orders_in_branch AS (
+           SELECT so.* FROM service_orders so
+           JOIN orders_in_branch ob ON so.order_id = ob.id
+       ),
+       items_demand_in_branch AS (
+           SELECT stni.item_id, SUM(stni.count * so.count) AS total_quantity
+           FROM service_orders_in_branch so
+           JOIN service_types_needed_items stni ON so.service_type_id = stni.service_type_id
+           GROUP BY stni.item_id
+       ),
+       items_demand_overall AS (
+           SELECT stni.item_id, SUM(stni.count * so.count) AS total_quantity
+           FROM service_orders so
+           JOIN service_types_needed_items stni ON so.service_type_id = stni.service_type_id
+           GROUP BY stni.item_id
+       )
+       SELECT i.id AS item_id, i.name AS item_name, f.name AS firm_name,
+              COALESCE(d_branch.total_quantity, 0) AS demand_in_branch,
+              COALESCE(d_overall.total_quantity, 0) AS demand_overall
+       FROM items i
+       LEFT JOIN firms f ON i.firm_id = f.id
+       LEFT JOIN items_demand_in_branch d_branch ON i.id = d_branch.item_id
+       LEFT JOIN items_demand_overall d_overall ON i.id = d_overall.item_id
+       WHERE COALESCE(d_branch.total_quantity, 0) > 0 OR COALESCE(d_overall.total_quantity, 0) > 0
+       ORDER BY demand_overall DESC, demand_in_branch DESC;)",
+
+        // 11
+        R"(WITH filtered_orders AS (
+           SELECT o.id
+           FROM orders o
+           WHERE o.accept_time BETWEEN '2024-05-20 10:00:00'::timestamp AND '2024-05-22 16:45:00'::timestamp
+             AND o.outlet_id = 1
+       ),
+       service_orders_filtered AS (
+           SELECT so.*
+           FROM service_orders so
+           JOIN filtered_orders fo ON so.order_id = fo.id
+       ),
+       items_sold AS (
+           SELECT stni.item_id, SUM(stni.count * so.count) AS total_quantity
+           FROM service_orders_filtered so
+           JOIN service_types_needed_items stni ON so.service_type_id = stni.service_type_id
+           GROUP BY stni.item_id
+       )
+       SELECT i.id AS item_id, i.name AS item_name, f.name AS firm_name,
+              COALESCE(items_sold.total_quantity, 0) AS quantity_sold
+       FROM items i
+       LEFT JOIN firms f ON i.firm_id = f.id
+       LEFT JOIN items_sold ON i.id = items_sold.item_id
+       WHERE items_sold.total_quantity IS NOT NULL
+       ORDER BY quantity_sold DESC;)",
+
+        // 12
+        R"(SELECT o.id AS outlet_id, o.address, ot.name AS outlet_type
+       FROM outlets o
+       JOIN outlet_types ot ON o.type_id = ot.id
+       ORDER BY o.id;
+
+       SELECT o.id AS outlet_id, o.address, ot.name AS outlet_type
+       FROM outlets o
+       JOIN outlet_types ot ON o.type_id = ot.id
+       WHERE ot.name = 'kiosk'
+       ORDER BY o.id;)"};
+
     void Application::Run() noexcept
     {
         using namespace ImGuiUtils;
@@ -293,8 +511,6 @@ namespace nsudb
         // Our state
         ImGuiIO& io                  = ImGui::GetIO();
         ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
-        bool show_demo_window        = true;
-        bool show_another_window     = false;
         ImVec4 clear_color           = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
         // App state
@@ -315,12 +531,6 @@ namespace nsudb
         dbDesc.Database.resize(32, 0);
         dbDesc.Username.resize(32, 0);
         dbDesc.Password.resize(32, 0);
-
-        // dbDesc.HostName = "127.0.0.1";
-        // dbDesc.Database = "photo_center_db";
-        // dbDesc.Username = "admin_user";
-        // dbDesc.Password = "admin";
-        // dbDesc.Port     = 5431;
 
         static bool s_bShowDbConnWindow      = true;  // On startup we have to enter db options first.
         static bool s_bShowAppSettingsWindow = false;
@@ -513,16 +723,50 @@ namespace nsudb
                 // Queries
                 if (ImGui::Begin("SQL", nullptr, dbWindowFlags))
                 {
-                    // Input field for SQL query
-                    ImGui::Text("SQL Query:");
-                    // Set the InputTextMultiline to expand horizontally (-FLT_MIN)
-                    // and use a flexible height that will allow vertical resizing
-                    ImGui::InputTextMultiline("##SQLQuery", sqlQueryBuffer, sizeof(sqlQueryBuffer),
-                                              ImVec2(-FLT_MIN, ImGui::GetContentRegionAvail().y *
-                                                                   0.4f),  // Allocate 40% of remaining vertical space, adjust as needed
-                                              ImGuiInputTextFlags_AllowTabInput);
+                    // Выбор запроса из списка
+                    ImGui::Text("Predefined Queries:");
 
-                    // Run Query button
+                    // Храним строки, чтобы избежать dangling pointer
+                    static std::vector<std::string> queryLabelsStorage;
+                    static std::vector<const char*> queryLabels;
+
+                    queryLabelsStorage.clear();
+                    queryLabels.clear();
+                    queryLabelsStorage.reserve(s_HardcodedDbQueries.size());
+                    queryLabels.reserve(s_HardcodedDbQueries.size());
+
+                    for (size_t i = 0; i < s_HardcodedDbQueries.size(); ++i)
+                    {
+                        queryLabelsStorage.emplace_back("Query " + std::to_string(i + 1));
+                        queryLabels.push_back(queryLabelsStorage.back().c_str());
+                    }
+
+                    if (ImGui::Combo("##PredefinedQueries", &s_SelectedQueryIndex, queryLabels.data(),
+                                     static_cast<int>(queryLabels.size())))
+                    {
+                        if (s_SelectedQueryIndex >= 0 && s_SelectedQueryIndex < static_cast<int>(s_HardcodedDbQueries.size()))
+                        {
+                            strncpy(sqlQueryBuffer, s_HardcodedDbQueries[s_SelectedQueryIndex].c_str(), sizeof(sqlQueryBuffer) - 1);
+                            sqlQueryBuffer[sizeof(sqlQueryBuffer) - 1] = '\0';  // safety null-termination
+                        }
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("Copy to Editor") && s_SelectedQueryIndex >= 0 &&
+                        s_SelectedQueryIndex < static_cast<int>(s_HardcodedDbQueries.size()))
+                    {
+                        strncpy(sqlQueryBuffer, s_HardcodedDbQueries[s_SelectedQueryIndex].c_str(), sizeof(sqlQueryBuffer) - 1);
+                        sqlQueryBuffer[sizeof(sqlQueryBuffer) - 1] = '\0';
+                    }
+
+                    ImGui::Separator();
+
+                    // Редактор запроса
+                    ImGui::Text("SQL Query Editor:");
+                    ImGui::InputTextMultiline("##SQLQuery", sqlQueryBuffer, sizeof(sqlQueryBuffer),
+                                              ImVec2(-FLT_MIN, ImGui::GetContentRegionAvail().y * 0.4f), ImGuiInputTextFlags_AllowTabInput);
+
+                    // Кнопка выполнения
                     if (m_DbConn && ImGui::Button("Run Query"))
                     {
                         lastQueryResult = m_DbConn->Execute(sqlQueryBuffer);
@@ -530,40 +774,35 @@ namespace nsudb
 
                     ImGui::SameLine();
                     ImGui::TextDisabled("(Cmd+Enter / Ctrl+Enter to run)");
-                    // Optional: Add a clear button
                     ImGui::SameLine();
                     if (ImGui::Button("Clear Result"))
                     {
                         lastQueryResult = std::nullopt;
                     }
 
-                    // Display query results
+                    // Вывод результата
                     if (lastQueryResult && !lastQueryResult->ColumnNames.empty())
                     {
                         ImGui::Separator();
                         ImGui::Text("Result: %zu rows, %zu cols", lastQueryResult->Rows.size(), lastQueryResult->ColumnNames.size());
 
-                        // Use ImGui::BeginTable for better structured tabular data
-                        // Add ImGuiTableFlags_SizingStretchSame to make columns stretch evenly initially
                         if (ImGui::BeginTable("SQLQueryResultTable", lastQueryResult->ColumnNames.size(),
                                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                                   ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchSame))
                         {
-                            // Headers
                             for (const auto& colName : lastQueryResult->ColumnNames)
                             {
                                 ImGui::TableSetupColumn(colName.c_str());
                             }
                             ImGui::TableHeadersRow();
 
-                            // Rows
-                            for (size_t i{}; i < lastQueryResult->Rows.size(); ++i)
+                            for (const auto& row : lastQueryResult->Rows)
                             {
                                 ImGui::TableNextRow();
-                                for (size_t j{}; j < lastQueryResult->Rows[i].size(); ++j)
+                                for (size_t j = 0; j < row.size(); ++j)
                                 {
                                     ImGui::TableSetColumnIndex(j);
-                                    ImGui::TextUnformatted(lastQueryResult->Rows[i][j].c_str());
+                                    ImGui::TextUnformatted(row[j].c_str());
                                 }
                             }
 

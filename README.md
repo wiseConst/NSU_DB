@@ -1,6 +1,6 @@
 # NSU_DB
 
-A C++ client-server application for interacting with a PostgreSQL database using [pgfe](https://github.com/dmitigr/pgfe) and a modern GUI built with [ImGui](https://github.com/ocornut/imgui).
+A C++ client-server application for interacting with a PostgreSQL database using [pgfe](https://github.com/dmitigr/pgfe) and a modern GUI built with [ImGui](https://github.com/ocornut/imgui), rapid logger [spdlog](https://github.com/gabime/spdlog).
 
 ---
 
